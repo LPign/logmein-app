@@ -1,0 +1,143 @@
+name: CD – Build & Deploy
+
+# ─── Déclencheurs ─────────────────────────────────────────────────────────────
+# Le CD se déclenche uniquement quand le CI passe sur main
+on:
+  workflow_run:
+    workflows: ["CI – Tests & Security"]
+    branches:
+      - main
+    types:
+      - completed
+
+# ─── Variables globales ───────────────────────────────────────────────────────
+env:
+  REGISTRY: docker.io
+  BACKEND_IMAGE: ${{ secrets.DOCKER_USERNAME }}/logmein-backend
+  FRONTEND_IMAGE: ${{ secrets.DOCKER_USERNAME }}/logmein-frontend
+
+# ─── Jobs ─────────────────────────────────────────────────────────────────────
+jobs:
+
+  # ── Job 1 : Build & Push images Docker ──────────────────────────────────────
+  build-and-push:
+    name: Build & Push Docker Images
+    runs-on: ubuntu-latest
+    # Ne lance que si le CI précédent a réussi
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    outputs:
+      # Passe le tag de l'image au job de déploiement
+      image-tag: ${{ steps.meta.outputs.version }}
+
+    steps:
+      # 1. Récupérer le code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Configurer Docker Buildx (builder multi-plateforme)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 3. Se connecter au registry Docker Hub
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # 4. Générer les tags et labels de l'image
+      # - Tag avec le SHA du commit (ex: sha-abc1234)
+      # - Tag "latest" sur la branche main
+      - name: Extract metadata for backend
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.BACKEND_IMAGE }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      # 5. Build et push de l'image backend
+      - name: Build and push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          dockerfile: ./backend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Cache pour accélérer les builds suivants
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 6. Build et push de l'image frontend
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          dockerfile: ./frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:sha-${{ github.sha }}
+            ${{ env.FRONTEND_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Job 2 : Déploiement sur le cluster Docker Swarm ─────────────────────────
+  deploy:
+    name: Deploy to Docker Swarm
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: production  # Environnement GitHub avec approbation manuelle optionnelle
+
+    steps:
+      # 1. Récupérer le code (pour le docker-stack.yml)
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Se connecter au manager Swarm via SSH et déployer
+      # Le runner GitHub se connecte au serveur manager en SSH
+      # et exécute la commande de déploiement à distance
+      - name: Deploy stack to Swarm
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SWARM_MANAGER_HOST }}
+          username: ${{ secrets.SWARM_MANAGER_USER }}
+          key: ${{ secrets.SWARM_SSH_KEY }}
+          script: |
+            # Se placer dans le dossier du projet
+            cd /opt/logmein
+
+            # Mettre à jour les variables d'environnement
+            export BACKEND_IMAGE=${{ env.BACKEND_IMAGE }}:sha-${{ github.sha }}
+            export FRONTEND_IMAGE=${{ env.FRONTEND_IMAGE }}:sha-${{ github.sha }}
+            export DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            export DB_USER=${{ secrets.DB_USER }}
+            export DB_NAME=${{ secrets.DB_NAME }}
+
+            # Déployer ou mettre à jour le stack Swarm
+            docker stack deploy \
+              --compose-file docker-stack.yml \
+              --with-registry-auth \
+              logmein
+
+            # Vérifier que le déploiement s'est bien passé
+            docker stack services logmein
+
+      # 3. Vérifier que l'application répond après déploiement
+      - name: Health check after deployment
+        run: |
+          echo "Attente du démarrage des services (30s)..."
+          sleep 30
+
+          # Appel du endpoint /health du backend via le frontend Nginx
+          response=$(curl -s -o /dev/null -w "%{http_code}" \
+            http://${{ secrets.SWARM_MANAGER_HOST }}:3000/health)
+
+          if [ "$response" = "200" ]; then
+            echo "✅ Déploiement réussi – application opérationnelle"
+          else
+            echo "❌ Déploiement échoué – code HTTP: $response"
+            exit 1
+          fi

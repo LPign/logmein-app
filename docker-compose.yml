@@ -1,40 +1,53 @@
-version: "3.9"
-
 services:
 
+  # ─── Base de données PostgreSQL ───────────────────────────────────────────
   db:
     image: postgres:15-alpine
     container_name: logmein-db
-    env_file:
-      - .env
     environment:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - backend-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
+  # ─── Backend Flask ─────────────────────────────────────────────────────────
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: logmein-backend
-    env_file:
-      - .env
     environment:
       DB_HOST: db
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_PORT: 5432
     ports:
       - "5000:5000"
     networks:
       - backend-network
       - frontend-network
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
+  # ─── Frontend Nginx ────────────────────────────────────────────────────────
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     container_name: logmein-frontend
     ports:
       - "3000:80"
@@ -44,10 +57,15 @@ services:
       - backend
     restart: unless-stopped
 
-
+# ─── Volumes ──────────────────────────────────────────────────────────────────
 volumes:
   postgres_data:
+    driver: local
 
+# ─── Réseaux ──────────────────────────────────────────────────────────────────
 networks:
   backend-network:
+    driver: bridge
+
   frontend-network:
+    driver: bridge

@@ -1,0 +1,56 @@
+version: '3.9'
+
+services:
+  flask-backend:
+    image: lpign/logmein-backend:latest
+    networks: [logmein-backend-net, logmein-frontend-net]
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+    deploy:
+      replicas: 2
+      placement:
+        constraints: [node.role == worker]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  nginx-frontend:
+    image: lpign/logmein-frontend:latest
+    ports:
+      - "3000:80"
+    networks: [logmein-frontend-net]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == worker]
+
+  postgres:
+    image: postgres:15-alpine
+    networks: [logmein-backend-net]
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager] # Plus simple pour les données
+
+networks:
+  logmein-backend-net:
+    driver: overlay
+  logmein-frontend-net:
+    driver: overlay
+
+volumes:
+  postgres_data:
+    driver: local

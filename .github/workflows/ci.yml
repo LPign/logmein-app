@@ -1,0 +1,145 @@
+name: CI – Tests & Security
+
+# ─── Déclencheurs ─────────────────────────────────────────────────────────────
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+# ─── Jobs ─────────────────────────────────────────────────────────────────────
+jobs:
+
+  # ── Job 1 : Linting (Flake8) ────────────────────────────────────────────────
+  lint:
+    name: Code Quality – Flake8
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Récupérer le code du repo
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Installer Python
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # 3. Installer Flake8
+      - name: Install Flake8
+        run: pip install flake8
+
+      # 4. Lancer le linting sur le backend
+      # E501 : lignes trop longues (tolérance à 120 caractères)
+      # W503 : style de saut de ligne (désactivé car débattu)
+      - name: Run Flake8
+        run: |
+          flake8 backend/app.py \
+            --max-line-length=120 \
+            --extend-ignore=W503 \
+            --statistics
+
+  # ── Job 2 : Tests automatiques (pytest) ─────────────────────────────────────
+  tests:
+    name: Backend Tests – Pytest
+    runs-on: ubuntu-latest
+    needs: lint  # Lance uniquement si le linting passe
+
+    # Service PostgreSQL temporaire pour les tests
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: logs_db
+          POSTGRES_USER: logs_user
+          POSTGRES_PASSWORD: cybftRoom1
+        ports:
+          - 5432:5432
+        # Attendre que PostgreSQL soit prêt avant de lancer les tests
+        options: >-
+          --health-cmd "pg_isready -U logs_user -d logs_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      # 1. Récupérer le code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Installer Python
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # 3. Installer les dépendances de l'app et de test
+      - name: Install dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-cov
+
+      # 4. Lancer les tests avec rapport de couverture
+      - name: Run tests with coverage
+        env:
+          DB_HOST: localhost
+          DB_NAME: logs_db
+          DB_USER: logs_user
+          DB_PASSWORD: cybftRoom1
+          DB_PORT: 5432
+        working-directory: backend
+        run: |
+          python -m pytest tests/ -v \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --tb=short
+
+      # 5. Publier le rapport de couverture (visible dans GitHub)
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: backend/coverage.xml
+
+  # ── Job 3 : Scan de sécurité (Trivy) ────────────────────────────────────────
+  security:
+    name: Security Scan – Trivy
+    runs-on: ubuntu-latest
+    needs: tests  # Lance uniquement si les tests passent
+
+    steps:
+      # 1. Récupérer le code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Construire l'image Docker du backend
+      - name: Build backend Docker image
+        run: |
+          docker build -t logmein-backend:${{ github.sha }} ./backend
+
+      # 3. Scanner l'image avec Trivy
+      # CRITICAL et HIGH : failles graves qui bloquent le pipeline
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: logmein-backend:${{ github.sha }}
+          format: table
+          exit-code: "1"           # Fait échouer le job si failles trouvées
+          severity: "CRITICAL,HIGH"
+          ignore-unfixed: true     # Ignore les failles sans correctif disponible
+
+      # 4. Scanner aussi le filesystem (dépendances Python)
+      - name: Scan Python dependencies
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: backend/
+          format: table
+          exit-code: "1"
+          severity: "CRITICAL,HIGH"
