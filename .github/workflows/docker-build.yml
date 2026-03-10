@@ -22,17 +22,13 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build backend image
-        run: |
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/logmein-backend ./backend
-
-      - name: Build frontend image
-        run: |
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/logmein-frontend ./frontend
+        run: docker build -t lpign/logmein-backend:latest ./backend
 
       - name: Push backend image
-        run: |
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/logmein-backend
+        run: docker push lpign/logmein-backend:latest
+
+      - name: Build frontend image
+        run: docker build -t lpign/logmein-frontend:latest ./frontend
 
       - name: Push frontend image
-        run: |
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/logmein-frontend
+        run: docker push lpign/logmein-frontend:latest
