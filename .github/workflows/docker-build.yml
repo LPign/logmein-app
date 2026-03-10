@@ -6,12 +6,9 @@ on:
       - main
 
 jobs:
-
   build-and-push:
     runs-on: ubuntu-latest
-
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -21,14 +18,16 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build backend image
-        run: docker build -t lpign/logmein-backend:latest ./backend
+      - name: Build and push Backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: lpign/logmein-backend:latest
 
-      - name: Push backend image
-        run: docker push lpign/logmein-backend:latest
-
-      - name: Build frontend image
-        run: docker build -t lpign/logmein-frontend:latest ./frontend
-
-      - name: Push frontend image
-        run: docker push lpign/logmein-frontend:latest
+      - name: Build and push Frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: lpign/logmein-frontend:latest
