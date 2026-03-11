@@ -1,18 +1,23 @@
 CREATE TABLE IF NOT EXISTS logs (
-    id         SERIAL PRIMARY KEY,
-    message    TEXT NOT NULL,
-    level      VARCHAR(10) DEFAULT 'INFO',
-    created_at TIMESTAMP DEFAULT NOW()
+    id        SERIAL PRIMARY KEY,
+    timestamp TIMESTAMPTZ DEFAULT NOW(),
+    level     VARCHAR(10) NOT NULL,
+    message   TEXT NOT NULL,
+    service   VARCHAR(100) DEFAULT 'unknown',
+    data      JSONB DEFAULT '{}'
 );
 
-INSERT INTO logs (message, level) VALUES
-    ('Infrastructure LogMeIn démarrée', 'INFO'),
-    ('PFS1 CARP MASTER actif', 'INFO'),
-    ('LACP Port-Channel1 bundled SU', 'INFO'),
-    ('Docker Swarm initialisé', 'INFO'),
-    ('Worker01 rejoint le cluster', 'INFO'),
-    ('Worker02 rejoint le cluster', 'INFO'),
-    ('Erreur test connexion VLAN40', 'ERROR'),
-    ('VPN Entreprise 2 établi', 'INFO'),
-    ('Zabbix monitoring actif', 'INFO'),
-    ('Stack logmein déployée', 'INFO');
+CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_logs_level ON logs(level);
+
+INSERT INTO logs (level, message, service) VALUES
+    ('INFO',  'Infrastructure LogMeIn démarrée',  'system'),
+    ('INFO',  'PFS1 CARP MASTER actif',            'network'),
+    ('INFO',  'LACP Port-Channel1 bundled SU',     'network'),
+    ('INFO',  'Docker Swarm initialisé',            'docker'),
+    ('INFO',  'Worker01 rejoint le cluster',        'docker'),
+    ('INFO',  'Worker02 rejoint le cluster',        'docker'),
+    ('ERROR', 'Erreur test connexion VLAN40',       'network'),
+    ('INFO',  'VPN Entreprise 2 établi',            'network'),
+    ('INFO',  'Zabbix monitoring actif',            'monitoring'),
+    ('INFO',  'Stack logmein déployée',             'docker');
