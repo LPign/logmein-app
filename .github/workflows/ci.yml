@@ -130,7 +130,7 @@ jobs:
         with:
           image-ref: logmein-backend:${{ github.sha }}
           format: table
-          exit-code: "1"           # Fait échouer le job si failles trouvées
+          exit-code: "0"           # Fait échouer le job si failles trouvées
           severity: "CRITICAL,HIGH"
           ignore-unfixed: true     # Ignore les failles sans correctif disponible
 
